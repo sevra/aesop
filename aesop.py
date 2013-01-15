@@ -3,7 +3,7 @@
 # stdlib imports
 import os, sys, signal, curses, datetime
 from select import select, error
-from mplayer import MPlayer, PLAYING, PAUSED, STOPPED, SelectQueue
+from mplayer import MPlayer, SelectQueue
 from itertools import cycle
 
 # local imports
@@ -54,13 +54,16 @@ class StateHandler(Handler):
          state = 'Paused'
       elif self.stopped:
          state = 'Stopped'
+      elif self.loading:
+         state = 'Loading'
 
       win.move(0, 0)
       win.clrtoeol()
-      win.insstr('File:%s State:%s' % (self.file, state))
+      win.insstr('State:%s' % state)
       win.move(1, 0)
       win.clrtoeol()
-      win.insstr('Path:%s' % self.path, curses.A_BOLD)
+      win.insstr('File:%s' % self.file, curses.color_pair(2) | curses.A_BOLD)
+      win.insstr('Path:%s/ ' % self.path, curses.A_BOLD)
       win.refresh()
 
    def set_path(self, path):
@@ -145,6 +148,8 @@ class BrowserHandler(Handler):
    def __init__(self, win, player, exts, browser=None):
       self.browser = browser or Browser(exts)
       self.exts = exts
+      self.offset = 0
+      self.continuous = False
       self.last_mouse_event = None
       super(BrowserHandler, self).__init__(win, player)
 
@@ -155,9 +160,15 @@ class BrowserHandler(Handler):
          Bind('Move cursor down.', ['KEY_DOWN', 'j'], self.goto, 1),
          Bind('Move cursor to start of page.', ['KEY_PPAGE', 'K'], self.goto, 0, False),
          Bind('Move cursor to end of page.', ['KEY_NPAGE', 'J'], self.goto, lambda : self.browser.len - 1, False),
+         Bind('Toggle sequential play of directory.', ['c'], self.toggle_continuous),
       )
       self.display()
       self.emit('chdir', self.browser.path)
+
+   def on_stop(self):
+      if self.continuous:
+         self.goto(1)
+         self.enter()
 
    def on_mouse(self, event):
       id, x, y, z, state = event
@@ -165,39 +176,53 @@ class BrowserHandler(Handler):
       beg = self.win.beg
       if not y - beg.y < self.browser.len: return
       if state & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
-         self.goto(y - beg.y, False)
+         self.goto(self.offset + y - beg.y, False)
       elif state & (curses.BUTTON3_PRESSED | curses.BUTTON3_CLICKED):
-         self.goto(y - beg.y, False)
-         self.enter()
-         
-      if state & 16777218: #| 17039360 | 17301504:
-         self.goto(y - beg.y, False)
+         self.goto(self.offset + y - beg.y, False)
+         self.enter() 
+      elif state & 16777218: #| 17039360 | 17301504:
+         self.goto(self.offset + y - beg.y, False)
 
       self.last_mouse_event = event
    
    def display(self):
       self.win.clear()
       i = 0
-      for file in self.browser[:self.win.max.y]:
+      for file in self.browser[self.offset:self.win.max.y + self.offset]:
          color = curses.color_pair(1 if os.path.isdir(file) else 2)
          self.win.insstr(i, 1, file, color | curses.A_BOLD)
-         if i == self.browser.idx:
+         if i == self.browser.idx - self.offset:
             self.win.chgat(curses.color_pair(3) | curses.A_BOLD)
          i += 1
       self.win.refresh()
 
-   def goto(self, i, rel=True):
+   def goto(self, i, relative=True):
       if callable(i): i = i()
-      self.browser.idx = self.browser.idx + i if rel else i
+      self.browser.idx = self.browser.idx + i if relative else i
+      # XXX There must be a better way to handle the offset than this
+      if self.win.max.y > self.browser.len:
+         pass
+      elif self.browser.idx == self.win.max.y + self.offset:
+         self.offset += 1
+      elif self.browser.idx == self.offset - 1:
+         self.offset -= 1
+      elif self.browser.idx == 0:
+         self.offset = 0
+      elif self.browser.idx == self.browser.len - 1:
+         self.offset = self.browser.len - self.win.max.y
       self.display()
 
    def enter(self):
       if os.path.isdir(self.browser.current):
+         self.offset = 0
          self.browser.chdir(self.browser.current)
          self.emit('chdir', self.browser.path)
       else:
          self.player.loadfile(os.path.abspath(self.browser.current))
       self.display()
+
+   def toggle_continuous(self):
+      self.continuous= not self.continuous
 
 
 class Aesop(Signaler, PlayerState):
@@ -227,10 +252,10 @@ class Aesop(Signaler, PlayerState):
       curses.mouseinterval(0)
 
       curses.use_default_colors()
-      curses.init_pair(1, curses.COLOR_BLUE, 0)
-      curses.init_pair(2, curses.COLOR_CYAN, 0)
+      curses.init_pair(1, curses.COLOR_BLUE, -1)
+      curses.init_pair(2, curses.COLOR_CYAN, -1)
       curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
-      curses.init_pair(4, curses.COLOR_YELLOW, 0)
+      curses.init_pair(4, curses.COLOR_YELLOW, -1)
 
       self.windows.add('help', 3, 0, self.windows.max.y-6, self.windows.max.x-1)
       self.handlers.help = HelpHandler(self.windows.help, self.player, self.windows)
@@ -299,6 +324,10 @@ class Aesop(Signaler, PlayerState):
       elif self.stopped:
          self.player.defaults['prefix'] = ''
          self.handle('stop')
+         self.timeout = None
+      elif self.loading:
+         self.player.defaults['prefix'] = ''
+         self.handle('load')
          self.timeout = None
       self.windows.refresh()
 

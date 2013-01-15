@@ -25,11 +25,11 @@ class Browser(list):
       self._idx = 0
       self.chdir(path or os.getcwd())
 
-   def chdir(self, path):
+   def chdir(self, path=None):
       self.clear()
-      self.path = os.path.abspath(path)
+      self.path = os.path.abspath(path or self.current)
       self.dirs, self.files = map(sorted, next(os.walk(self.path))[1:])
-      self.extend(['..'])
+      self.insert(0, '..')
       self.extend(self.dirs)
       self.extend(filter(lambda file: file.split(os.extsep)[-1:][0] in self.exts, self.files))
       self.len = len(self)

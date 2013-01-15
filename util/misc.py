@@ -1,4 +1,4 @@
-from mplayer import PLAYING, PAUSED, STOPPED
+from mplayer import PLAYING, PAUSED, STOPPED, LOADING
 
 stom = lambda secs : [secs / 60, secs % 60]
 
@@ -46,6 +46,10 @@ class PlayerState(object):
    def stopped(self):
       return self.player.state == STOPPED  
 
+   @property
+   def loading(self):
+      return self.player.state == LOADING
+
 
 class Handler(Signaler, PlayerState):
    def __init__(self, win, player):
@@ -57,6 +61,9 @@ class Handler(Signaler, PlayerState):
       pass
 
    def on_change(self):
+      pass
+
+   def on_load(self):
       pass
 
    def on_play(self):
